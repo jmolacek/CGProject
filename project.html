@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style type="text/css">
+body {
+    font-family: "Helvetica"
+}
+
+#gl-canvas {
+    float: left;
+    margin-right: 10pt;
+}
+
+/*#help {
+    float: left;
+}*/
+</style>
+<title>Cole Kurkowski: 31628508</title>
+<script id="vertex-shader" type="x-shader/x-vertex">
+attribute vec4 vPosition;
+attribute vec4 vColor;
+attribute vec3 vNormal;
+
+uniform vec4 lightPosition;
+uniform vec4 lightSpecular, lightDiffuse, lightAmbient;
+
+uniform vec4 q;
+uniform vec3 translation;
+uniform mat4 viewMatrix;
+uniform mat4 projectionMatrix;
+
+uniform vec3 maxes;
+uniform int colorStyleUseXYZ;
+uniform vec4 ambientColors[5], diffuseColors[5], specularColors[5];
+uniform float colorStops[5];
+
+varying vec4 fColor;
+varying vec3 N, L, E;
+varying float materialShininess;
+varying vec4 specularProduct, diffuseProduct, ambientProduct;
+uniform float shininess[5];
+
+mat4 quaternionToMatrix(vec4 quaternion) {
+    float w, x, y, z;
+    w = quaternion[0];
+    x = quaternion[1];
+    y = quaternion[2];
+    z = quaternion[3];
+
+    return mat4(1.0 - 2.0 * pow(y, 2.0) - 2.0 * pow(z, 2.0), 2.0 *x*y + 2.0 *w*z, 2.0 *x*z - 2.0 *w*y, 0.0,
+        2.0 *x*y - 2.0 *w*z, 1.0 - 2.0 * pow(x, 2.0) - 2.0 * pow(z, 2.0), 2.0 *y*z + 2.0 *w*x, 0.0,
+        2.0 *x*z + 2.0 *w*y, 2.0 *y*z - 2.0 *w*x, 1.0 - 2.0 * pow(x, 2.0) - 2.0 * pow(y, 2.0), 0.0,
+        0.0, 0.0, 0.0, 1.0);
+}
+
+vec4 interpolatedColorArrays(float z, vec4[5] colors, float[5] colorStops) {
+    float normalZ = z / maxes.z;
+
+    vec4 sum = vec4(0.0);
+    float product = 1.0;
+
+    for (int i = 0; i < 5; i += 1) {
+        product = 1.0;
+        for (int j = 0; j < 5; j += 1) {
+            if (i != j) {
+                product *=  (normalZ - colorStops[j]) / (colorStops[i] - colorStops[j]);
+            }
+        }
+        sum += product * colors[i];
+    }
+
+    return sum;
+}
+
+float interpolatedFloatArrays(float z, float[5] colors, float[5] colorStops) {
+    float normalZ = z / maxes.z;
+
+    float sum = float(0.0);
+    float product = 1.0;
+
+    for (int i = 0; i < 5; i += 1) {
+        product = 1.0;
+        for (int j = 0; j < 5; j += 1) {
+            if (i != j) {
+                product *=  (normalZ - colorStops[j]) / (colorStops[i] - colorStops[j]);
+            }
+        }
+        sum += product * colors[i];
+    }
+
+    return sum;
+}
+
+mat4 createTranslationMatrix(vec4 t) {
+    return  mat4(1.0, 0.0, 0.0, 0.0,
+                 0.0, 1.0, 0.0, 0.0,
+                 0.0, 0.0, 1.0, 0.0,
+                 t.x, t.y, t.z, 1.0);
+}
+
+void
+main()
+{    
+    mat4 quaternionRotationMatrix = quaternionToMatrix(q);
+    mat4 modelViewMatrix = quaternionRotationMatrix * viewMatrix;
+
+    vec4 forwardVector = modelViewMatrix * (translation.x * normalize(vec4(1.0, 1.0, 0.0, 0.0)));
+    vec4 rightVector = modelViewMatrix * (translation.y * normalize(vec4(-1.0, 1.0, 0.0, 0.0)));
+    vec4 upVector = modelViewMatrix * (translation.z * normalize(vec4(0.0, 0.0, -1.0, 0.0)));
+    mat4 translationMatrix = createTranslationMatrix(forwardVector + rightVector + upVector);
+    modelViewMatrix = translationMatrix * modelViewMatrix;
+
+    vec4 materialAmbient, materialDiffuse, materialSpecular;
+
+    if (colorStyleUseXYZ == 0) {
+        materialAmbient = interpolatedColorArrays(vPosition.z, ambientColors, colorStops);
+        materialDiffuse = interpolatedColorArrays(vPosition.z, diffuseColors, colorStops);
+        materialSpecular = interpolatedColorArrays(vPosition.z, specularColors, colorStops);
+        materialShininess = interpolatedFloatArrays(vPosition.z, shininess, colorStops);
+    } else {
+        materialDiffuse = vec4(vPosition.x / maxes.x, vPosition.y / maxes.y, vPosition.z / maxes.z, 1.0);
+        materialAmbient = 0.95 * materialDiffuse;
+        materialSpecular = materialDiffuse;
+        materialShininess = 100.0;
+    }
+
+    ambientProduct = lightAmbient * materialAmbient;
+    diffuseProduct = lightDiffuse * materialDiffuse;
+    specularProduct = lightSpecular * materialDiffuse;
+    
+
+    vec3 pos = (modelViewMatrix * vPosition).xyz;
+    vec3 light = (modelViewMatrix * lightPosition).xyz;
+    L = normalize(light - pos);
+    E = -pos;
+    vec4 normal = vec4(vNormal, 0.0);
+    N = normalize((modelViewMatrix * normal).xyz);
+
+	vec4 newP = projectionMatrix * modelViewMatrix * vec4(vPosition.xyz, 1.0);
+
+    gl_Position = newP;
+	
+}
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+
+precision mediump float;
+
+varying vec4 fColor;
+
+varying vec4 specularProduct, diffuseProduct, ambientProduct;
+varying float materialShininess;
+varying vec3 N, L, E;
+
+void
+main()
+{
+
+    vec4 newColor;
+
+    vec3 H = normalize( L + E );
+    vec4 ambient = ambientProduct;
+    ambient.a = 1.0;
+
+    float Kd = max(dot(L, N), 0.0);
+    vec4 diffuse = Kd * diffuseProduct;
+    diffuse.a = 1.0;
+
+    float Ks = pow(max(dot(N, H), 0.0), materialShininess);
+    vec4 specular = Ks * specularProduct;
+    specular.a = 1.0;
+
+    if (dot(L, N) < 0.0) {
+        specular = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    newColor = ambient + diffuse + specular;
+    newColor.a = 1.0;
+
+    gl_FragColor = newColor;
+}
+</script>
+
+<script type="text/javascript" src="Common/webgl-utils.js"></script>
+<script type="text/javascript" src="Common/initShaders.js"></script>
+<script type="text/javascript" src="Common/MV.js"></script>
+<script type="text/javascript" src="GLUtils/GLBufferObject.js"></script>
+<script type="text/javascript" src="GLUtils/GLModel.js"></script>
+<script type="text/javascript" src="GLUtils/GlVertexAttribute.js"></script>
+
+<script type="text/javascript" src="project.js"></script>
+<script type="text/javascript" src="Quaternion.js"></script>
+<script type="text/javascript" src="fractal.js"></script>
+</head>
+
+<body>
+<canvas id="gl-canvas" width="512" height="512">
+Oops ... your browser doesn't support the HTML5 canvas element
+</canvas>
+<p id="help">
+Click and drag to rotate. Use WASD to move in the XY plane, and space/shift to move along the Z axis (rotation doesn't affect the direction of motion)
+</p>
+<label><input id="xyz-box" type="checkbox"/>Use XYZ color</label><br/><br/>
+<button id="new-button">New Terrain</button>
+<br/><br/>
+<label>X: <input id="x-text" type="text"/></label><br/>
+<label>Y: <input id="y-text" type="text"/></label><br/>
+<label>Z: <input id="z-text" type="text"/></label><br/>
+<button id="look-button">Go to</button>
+<button id="light-button">Move Light</button>
+</body>
+</html>
